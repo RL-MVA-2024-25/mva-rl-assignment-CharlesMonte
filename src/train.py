@@ -5,6 +5,7 @@ from env_hiv_fast import FastHIVPatient
 import numpy as np
 import os
 import random
+import time
 import torch
 import torch.nn as nn
 
@@ -12,14 +13,14 @@ from copy import deepcopy
 from evaluate import evaluate_HIV, evaluate_HIV_population
 
 env = TimeLimit(
-    env=FastHIVPatient(domain_randomization=False), max_episode_steps=200
+    env=FastHIVPatient(domain_randomization=True), max_episode_steps=200
 )  # The time wrapper limits the number of steps in an episode at 200.
 # Now is the floor is yours to implement the agent and train it.
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 state_dim = env.observation_space.shape[0]
 n_actions = env.action_space.n
-hidden_dim = 256
+hidden_dim = 512
 
 DQN_model = nn.Sequential(
     nn.Linear(state_dim, hidden_dim),
@@ -41,12 +42,12 @@ config = {'nb_actions': n_actions,
           'buffer_size': 100_000,
           'epsilon_min': 0.01,
           'epsilon_max': 1.,
-          'epsilon_decay_period': 1_000,
-          'epsilon_delay_decay': 20,
-          'batch_size': 512,
+          'epsilon_decay_period': 10_000,
+          'epsilon_delay_decay': 100,
+          'batch_size': 1024,
           'gradient_steps': 1,
           'update_target_strategy': 'replace', # or 'ema'
-          'update_target_freq': 50,
+          'update_target_freq': 500,
           'update_target_tau': 0.005,
           'criterion': torch.nn.SmoothL1Loss(),
           'monitoring_nb_trials': 50}
@@ -143,6 +144,7 @@ class ProjectAgent:
         epsilon = self.epsilon_max
         step = 0
         while episode < max_episode:
+            start = time.time()
             # update epsilon
             if step > self.epsilon_delay:
                 epsilon = max(self.epsilon_min, epsilon-self.epsilon_step)
@@ -172,19 +174,52 @@ class ProjectAgent:
             # next transition
             step += 1
             if done or trunc:
-                score_agent = evaluate_HIV(agent=agent, nb_episode=1)
+                # score_agent = evaluate_HIV(agent=agent, nb_episode=1)
                 
-                if score_agent > self.best_score_agent:
-                    self.best_score_agent = score_agent
-                    self.best_model = deepcopy(self.model).to(self.device)
-                    self.save(SAVE_PATH)
-                    
+                # if score_agent > self.best_score_agent:
+                #     if score_agent > 2e10:
+                #         score_agent_dr = evaluate_HIV_population(agent=agent, nb_episode=1)
+                #         if score_agent_dr > self.best_score_agent_dr:
+                #             self.best_score_agent_dr = score_agent_dr
+                #             self.best_score_agent = score_agent
+                #             self.best_model = deepcopy(self.model).to(self.device)
+                #             self.save(SAVE_PATH)
+                #             print_score_agent_dr = '{:4.1f}'.format(score_agent_dr)
+                #     else:
+                #         self.best_score_agent = score_agent
+                #         self.best_model = deepcopy(self.model).to(self.device)
+                #         self.save(SAVE_PATH)
+                #         print_score_agent_dr = 'N/A'
+                score_agent_dr = evaluate_HIV_population(agent=agent, nb_episode=1)
+                print_score_agent_dr = '{:4.1f}'.format(score_agent_dr)
+                if score_agent_dr > self.best_score_agent_dr:
+                    self.best_score_agent_dr = score_agent_dr
+                    score_agent = evaluate_HIV(agent=agent, nb_episode=1)
+                    print_score_agent = '{:4.1f}'.format(score_agent)
+                    if score_agent > self.best_score_agent:
+                        self.best_score_agent = score_agent
+                        self.best_model = deepcopy(self.model).to(self.device)
+                        self.save(SAVE_PATH)
+                elif score_agent_dr >= 1e10:
+                    score_agent = evaluate_HIV(agent=agent, nb_episode=1)
+                    print_score_agent = '{:4.1f}'.format(score_agent)
+                    if score_agent > self.best_score_agent:
+                        self.best_score_agent = score_agent
+                        self.best_model = deepcopy(self.model).to(self.device)
+                        self.save(SAVE_PATH)
+                else:
+                    print_score_agent = 'N/A'
+                
+                end = time.time()
+                exec_time = end - start
                 episode += 1
                 print("Episode ", '{:3d}'.format(episode), 
                       ", epsilon ", '{:6.2f}'.format(epsilon), 
                       ", batch size ", '{:5d}'.format(len(self.memory)), 
                       ", episode return ", '{:4.1f}'.format(episode_cum_reward),
-                      ", score agent ", '{:4.1f}'.format(score_agent),
+                      ", score agent ", print_score_agent,
+                      ", score agent DR ", print_score_agent_dr,
+                      ", exec_time ", '{:4.1f}'.format(exec_time),
                       sep='')
                 state, _ = env.reset()
                 episode_return.append(episode_cum_reward)
